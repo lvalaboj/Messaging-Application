@@ -1,0 +1,302 @@
+import javax.swing.*;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Scanner;
+
+public class Messages {
+    private static HashMap<Integer, Messages> MessageClasses = new HashMap<>();
+    private int id;
+    private File messages;
+    private File members;
+    private Object messageLock = new Object();
+    private Object memberLock = new Object();
+    private ArrayList<String> messageList;
+    private HashMap<String, long[]> userTimes; // long 0 is when user joined, long 1 is last view
+    
+    // don't run this method, use the static getMessage instead (like Messages.getMessage(id);)
+    public Messages(int id) {
+        this.id = id;
+        messages = new File(String.format("chats%d.txt", id));
+        members = new File(String.format("Members%d.txt", id));
+        try {
+            members.createNewFile();
+            messages.createNewFile();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        updateMessages();
+        userTimes = new HashMap<String, long[]>();
+        updateUserTimes();
+        
+        MessageClasses.put(id, this);
+    }
+    
+    // run this to get the message class associated with a chat
+    public static Messages getMessage(int id) {
+        Messages out;
+        synchronized (Messages.class) {
+            if (MessageClasses.containsKey(id)) {
+                out = MessageClasses.get(id);
+            } else {
+                out = new Messages(id);
+            }
+        }
+        return out;
+    }
+    
+    public void addUser(String username) {
+        System.out.println("Added User " + username);
+        synchronized (memberLock) {
+            long time = System.currentTimeMillis();
+            userTimes.put(username, new long[]{time, time});
+            
+            writeUserTimes();
+        }
+    }
+    
+    public ArrayList<String> getMessageList() {
+        ArrayList<String> out;
+        synchronized (messageLock) {
+            out = new ArrayList<String>(messageList);
+        }
+        return out;
+    }
+    
+    public void updateUserTimes() {
+        synchronized (memberLock) {
+            userTimes.clear();
+            
+            FileReader fr = null;
+            
+            try {
+                fr = new FileReader(members);
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+            
+            assert fr != null;
+            BufferedReader br = new BufferedReader(fr);
+            
+            try {
+                String line = br.readLine();
+                
+                while (line != null) {
+                    String[] parts = line.split(" ");
+                    userTimes.put(parts[0], new long[]{Long.parseLong(parts[1]), Long.parseLong(parts[2])});
+                    line = br.readLine();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    
+    public void writeUserTimes() {
+        synchronized (messageLock) {
+            try {
+                FileWriter fw = new FileWriter(members, false);
+                BufferedWriter bw = new BufferedWriter(fw);
+                PrintWriter pw = new PrintWriter(bw);
+                
+                long[] times;
+                for (String s : userTimes.keySet()) {
+                    times = userTimes.get(s);
+                    pw.printf("%s %d %d%n", s, times[0], times[1]);
+                }
+                pw.flush();
+                
+                pw.close();
+                bw.close();
+                fw.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    
+    public ArrayList<String> getViewableMessages(String username) {
+        synchronized (messageLock) {
+            userTimes.get(username)[1] = System.currentTimeMillis();
+            writeUserTimes();
+        }
+        
+        ArrayList<String> messagesOut;
+        synchronized (messageLock) {
+            messagesOut = new ArrayList<>();
+            if (!userTimes.containsKey(username)) {
+                messagesOut = getMessageList();
+            } else {
+                long userTime = userTimes.get(username)[0];
+                
+                for (String s : messageList) {
+                    if (Long.parseLong(s.split("\\s+", 2)[0]) > userTime) {
+                        messagesOut.add(s);
+                    }
+                }
+            }
+        }
+        return messagesOut;
+    }
+    
+    public ArrayList<String> getNewMessages(String username) {
+        long userTime = 0;
+        long lastCheck = 0;
+        boolean hasUsername = false;
+        synchronized (messageLock) {
+            hasUsername = userTimes.containsKey(username);
+            
+            if (hasUsername) {
+                userTime = userTimes.get(username)[0];
+                lastCheck = userTimes.get(username)[1];
+                userTimes.get(username)[1] = System.currentTimeMillis();
+                writeUserTimes();
+            }
+        }
+        
+        if (!hasUsername) {
+            return getMessageList();
+        }
+        
+        ArrayList<String> messagesOut;
+        synchronized (messageLock) {
+            messagesOut = new ArrayList<>();
+            
+            long mTime;
+            for (String s : messageList) {
+                mTime = Long.parseLong(s.split("\\s+", 2)[0]);
+                if (mTime > userTime && mTime >= lastCheck) {
+                    messagesOut.add(s);
+                }
+            }
+        }
+        return messagesOut;
+    }
+    
+    public void writeMessageList() {
+        synchronized (messageLock) {
+            try {
+                FileWriter fw = new FileWriter(messages, false);
+                BufferedWriter bw = new BufferedWriter(fw);
+                PrintWriter pw = new PrintWriter(bw);
+                
+                for (String s : messageList) {
+                    pw.println(s);
+                }
+                pw.flush();
+                
+                pw.close();
+                bw.close();
+                fw.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    
+    public void updateMessages() {
+        synchronized (messageLock) {
+            messageList = new ArrayList<>();
+            FileReader fr = null;
+            
+            try {
+                fr = new FileReader(messages);
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+            
+            assert fr != null;
+            BufferedReader br = new BufferedReader(fr);
+            
+            try {
+                String line = br.readLine();
+                
+                while (line != null) {
+                    messageList.add(line);
+                    line = br.readLine();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    
+    public void addMessage(String message, String userName, long unixTimeCode) {
+        System.out.println("trying to add message");
+        synchronized (messageLock) {
+            System.out.println("added message " + message);
+            messageList.add(String.format("%d %s %s", unixTimeCode, userName, message));
+            
+            writeMessageList();
+        }
+    }
+    
+    public void editMessage(String originalString, String newMessage, String username) {
+        Scanner scanner = new Scanner(originalString);
+        
+        if (originalString.split(" ")[1].equals(username)) {
+            synchronized (messageLock) {
+                for (int i = 0; i < messageList.size(); i++) {
+                    if (messageList.get(i).equals(originalString)) {
+                        messageList.set(i, String.format("%s %s %s", scanner.next(), scanner.next(), newMessage));
+                        break;
+                    }
+                }
+                writeMessageList();
+            }
+        }
+    }
+    
+    public void deleteMessage(String originalString, String username) {
+        if (originalString.split(" ")[1].equals(username)) {
+            synchronized (messageLock) {
+                for (int i = 0; i < messageList.size(); i++) {
+                    if (messageList.get(i).equals(originalString)) {
+                        messageList.remove(i);
+                        break;
+                    }
+                }
+                
+                writeMessageList();
+            }
+        }
+    }
+    
+    public String getMemberList() {
+        String out = "";
+        for (String s : userTimes.keySet()) {
+            out += s + ",";
+        }
+        
+        return out.substring(0, out.length() - 1);
+    }
+    
+    public boolean hasRead(String username) {
+        long recentMessageTime = 0;
+        boolean noMessages = true;
+        synchronized (messageLock) {
+            if (messageList.size() > 0) {
+                noMessages = false;
+                String msg = messageList.get(messageList.size() - 1);
+                
+                recentMessageTime = Long.parseLong(msg.split(" ")[0]);
+            }
+        }
+        if (noMessages) {
+            return false;
+        }
+        
+        long userTime = 0;
+        noMessages = true;
+        synchronized (memberLock) {
+            try {
+                userTime = userTimes.get(username)[1];
+            } catch (Exception e) {
+                noMessages = false;
+            }
+        }
+        
+        return noMessages && recentMessageTime > userTime;
+    }
+}
