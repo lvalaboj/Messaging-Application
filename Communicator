@@ -1,0 +1,377 @@
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.net.Socket;
+import java.util.ArrayList;
+
+public class Communicator extends Thread {
+    private Socket socket;
+    ObjectOutputStream writer;
+    ObjectInputStream reader;
+    private Account acc = new Account();
+    Object lock = new Object();
+    Messages messages = null;
+
+    public Communicator(Socket socket) {
+        this.socket = socket;
+    }
+
+    public void run() {
+        synchronized (lock) {
+            acc.startApplication();
+        }
+        try {
+            writer = new ObjectOutputStream(socket.getOutputStream());
+            reader = new ObjectInputStream(socket.getInputStream());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        while (true) {
+
+            String message = null;
+            String password = null;
+            String username = null;
+
+            try {
+                System.out.println("Waiting for input......");
+                message = (String) reader.readObject();
+                System.out.println(message);
+            } catch (EOFException e) {
+                return;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            if (message == null) {
+                return;
+            }
+
+            if (message.equals("new user")) {
+                try {
+                    username = (String) reader.readObject();
+                    password = (String) reader.readObject();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+                if (acc.checkPass(password) == false || acc.userExist(username) || !acc.checkUsername(username)) {
+                    try {
+                        if (acc.userExist(username) && acc.checkPass(password)) {
+                            writer.writeObject("This Username Already Exist!");
+                        } else if (!acc.checkUsername(username)) {
+                            writer.writeObject("Username can't have spaces");
+                        } else if (acc.checkPass(password) == false && acc.userExist(username) == false) {
+                            writer.writeObject("Password Doesn't Match Requirements");
+                        } else if (acc.deletedUserCheck(username)) {
+                            writer.writeObject("This is a deleted username which is registered in the application!");
+                        } else {
+                            writer.writeObject("Password Doesn't Match Requirements and Username Already Exists");
+                        }
+                        writer.flush();
+
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    try {
+                        writer.writeObject("accepted");
+                        writer.flush();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+
+                    synchronized (lock) {
+                        acc.addUser(username, password);
+                    }
+                }
+
+            } else if (message.equals("Log-in")) {
+                try {
+                    username = (String) reader.readObject();
+                    password = (String) reader.readObject();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+                if (acc.userExist(username)) {
+                    if (acc.passExist(password)) {
+                        try {
+                            writer.writeObject("accepted");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        synchronized (lock) {
+                            acc.setUser(username);
+                            acc.startChatApplication();
+                        }
+                    } else {
+                        try {
+                            writer.writeObject("wrong password");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                } else {
+                    try {
+                        writer.writeObject("user doesn't exist");
+                        writer.flush();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            } else if (message.equals("change pass")) {
+                try {
+                    password = (String) reader.readObject();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+                if (acc.checkPass(password)) {
+                    if (!acc.getPass().equals(password)) {
+                        try {
+                            writer.writeObject("y");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        synchronized (lock) {
+                            acc.changePass(password);
+                        }
+                    } else {
+                        try {
+                            writer.writeObject("same");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                } else {
+                    try {
+                        writer.writeObject("invalid");
+                        writer.flush();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            } else if (message.equals("create chat")) {
+                try {
+                    username = (String) reader.readObject();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+
+                String[] usernames = username.split(" ");
+                username = username.replaceAll(" ", ",");
+                System.out.println(username);
+
+                System.out.println(acc.userExist(usernames[0]));
+
+                int count = 0;
+
+
+                if (usernames.length == 1) {
+                    if (acc.userExist(usernames[0])) {
+                        if (acc.chatExists(usernames[0]) == false) {
+                            if (!acc.getUser().equals(usernames[0])) {
+                                synchronized (lock) {
+                                    acc.createChat(usernames[0]);
+                                    acc.startChatApplication();
+                                }
+                                try {
+                                    writer.writeObject("success");
+                                    writer.flush();
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                try {
+                                    writer.writeObject("same");
+                                    writer.flush();
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        } else {
+                            try {
+                                writer.writeObject("exists");
+                                writer.flush();
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                    } else {
+                        try {
+                            writer.writeObject("no account");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                } else {
+                    for (int i = 0; i < usernames.length; i++) {
+                        if (acc.userExist(usernames[i])) {
+                            count++;
+                        }
+                    }
+
+                    if (count == usernames.length) {
+                        if (acc.groupChatExists(usernames)) {
+                            try {
+                                writer.writeObject("exists");
+                                writer.flush();
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        } else {
+                            if (username.contains(acc.getUser())) {
+                                try {
+                                    writer.writeObject("same");
+                                    writer.flush();
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                try {
+                                    writer.writeObject("success");
+                                    writer.flush();
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                                synchronized (lock) {
+                                    acc.createGroup(usernames);
+                                    acc.startChatApplication();
+                                }
+                            }
+                        }
+                    } else {
+                        try {
+                            writer.writeObject("no account");
+                            writer.flush();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            } else if (message.equals("view message")) {
+                acc.startChatApplication();
+                ArrayList<String> chats = acc.getChats();
+                String[] chat = new String[chats.size()];
+                for (int i = 0; i < chats.size(); i++) {
+                    chat[i] = (String.valueOf(i)) + ". " + chats.get(i);
+                }
+
+                try {
+                    writer.writeObject(chat);
+                    writer.flush();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("view chat")) {
+                int index = -1;
+                try {
+                    index = (int) reader.readObject();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+                int id = acc.getId(index);
+                //new Messages(id).getMessage(id);
+
+            } else if (message.equals("delete user")) {
+                acc.deleteUser();
+            } else if (message.equals("delete chat")) {
+                int id = -1;
+                try {
+                    id = (int) reader.readObject();
+                } catch (IOException | ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+                acc.deleteChat(id);
+            } else if (message.equals("get chat id")) {
+                int index = -1;
+                try {
+                    index = (int) reader.readObject();
+                } catch (IOException | ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+
+                int id = acc.getId(index);
+                messages = Messages.getMessage(id);
+
+                try {
+                    writer.writeObject(id);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                String name = acc.getChatName(index);
+                try {
+                    writer.writeObject(name);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("get messages")) {
+                try {
+                    writer.writeObject(messages.getViewableMessages(acc.getUser()));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("send message")) {
+                try {
+                    String msg = (String) reader.readObject();
+
+                    messages.addMessage(msg, acc.getUser(), System.currentTimeMillis());
+                } catch (IOException | ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("edit message")) {
+                try {
+                    String oldMessage = (String) reader.readObject();
+                    String newMessage = (String) reader.readObject();
+                    messages.editMessage(oldMessage, newMessage, acc.getUser());
+                } catch (IOException | ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("delete message")) {
+                try {
+                    String oldMessage = (String) reader.readObject();
+                    messages.deleteMessage(oldMessage, acc.getUser());
+                } catch (IOException | ClassNotFoundException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("get username")) {
+                try {
+                    writer.writeObject(acc.getUser());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("get members")) {
+                try {
+                    writer.writeObject(messages.getMemberList());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else if (message.equals("has unread")) {
+                try {
+                    writer.writeObject(acc.hasNewMessages());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+}
